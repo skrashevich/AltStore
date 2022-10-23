@@ -20,7 +20,8 @@ import Roxas
 
 extension AppManager
 {
-    static let didFetchSourceNotification = Notification.Name("com.altstore.AppManager.didFetchSource")
+    static let didFetchSourceNotification = Notification.Name("io.altstore.AppManager.didFetchSource")
+    static let didUpdatePatronsNotification = Notification.Name("io.altstore.AppManager.didUpdatePatrons")
     
     static let expirationWarningNotificationID = "altstore-expiration-warning"
     static let enableJITResultNotificationID = "altstore-enable-jit"
@@ -47,6 +48,8 @@ class AppManager
     
     @available(iOS 13, *)
     private(set) lazy var publisher: AppManagerPublisher = AppManagerPublisher()
+    
+    private(set) var updatePatronsResult: Result<Void, Error>?
     
     private let operationQueue = OperationQueue()
     private let serialOperationQueue = OperationQueue()
@@ -312,9 +315,12 @@ extension AppManager
 
 extension AppManager
 {
-    func fetchSource(sourceURL: URL, completionHandler: @escaping (Result<Source, Error>) -> Void)
+    func fetchSource(sourceURL: URL,
+                     managedObjectContext: NSManagedObjectContext = DatabaseManager.shared.persistentContainer.newBackgroundContext(),
+                     dependencies: [Foundation.Operation] = [],
+                     completionHandler: @escaping (Result<Source, Error>) -> Void)
     {
-        let fetchSourceOperation = FetchSourceOperation(sourceURL: sourceURL)
+        let fetchSourceOperation = FetchSourceOperation(sourceURL: sourceURL, managedObjectContext: managedObjectContext)
         fetchSourceOperation.resultHandler = { (result) in
             switch result
             {
@@ -324,6 +330,11 @@ extension AppManager
             case .success(let source):
                 completionHandler(.success(source))
             }
+        }
+        
+        for dependency in dependencies
+        {
+            fetchSourceOperation.addDependency(dependency)
         }
         
         self.run([fetchSourceOperation], context: nil)
@@ -392,6 +403,44 @@ extension AppManager
         fetchAppIDsOperation.resultHandler = completionHandler
         fetchAppIDsOperation.addDependency(authenticationOperation)
         self.run([fetchAppIDsOperation], context: authenticationOperation.context)
+    }
+    
+    @discardableResult
+    func fetchTrustedSources(completionHandler: @escaping (Result<[FetchTrustedSourcesOperation.TrustedSource], Error>) -> Void) -> FetchTrustedSourcesOperation
+    {
+        let fetchTrustedSourcesOperation = FetchTrustedSourcesOperation()
+        fetchTrustedSourcesOperation.resultHandler = completionHandler
+        self.run([fetchTrustedSourcesOperation], context: nil)
+        
+        return fetchTrustedSourcesOperation
+    }
+    
+    func updatePatronsIfNeeded()
+    {
+        guard self.operationQueue.operations.allSatisfy({ !($0 is UpdatePatronsOperation) }) else {
+            // There's already an UpdatePatronsOperation running.
+            return
+        }
+        
+        self.updatePatronsResult = nil
+        
+        let updatePatronsOperation = UpdatePatronsOperation()
+        updatePatronsOperation.resultHandler = { (result) in
+            do
+            {
+                try result.get()
+                self.updatePatronsResult = .success(())
+            }
+            catch
+            {
+                print("Error updating Friend Zone Patrons:", error)
+                self.updatePatronsResult = .failure(error)
+            }
+            
+            NotificationCenter.default.post(name: AppManager.didUpdatePatronsNotification, object: self)
+        }
+        
+        self.run([updatePatronsOperation], context: nil)
     }
     
     @discardableResult

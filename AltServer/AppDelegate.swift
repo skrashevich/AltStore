@@ -67,6 +67,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         #if STAGING
         SUUpdater.shared().feedURL = URL(string: "https://altstore.io/altserver/sparkle-macos-staging.xml")
+        #else
+        SUUpdater.shared().feedURL = URL(string: "https://altstore.io/altserver/sparkle-macos.xml")
         #endif
         
         let item = NSStatusBar.system.statusItem(withLength: -1)
@@ -470,15 +472,15 @@ extension AppDelegate: NSMenuDelegate
 
         if self.isAltPluginUpdateAvailable
         {
-            self.installMailPluginMenuItem.title = NSLocalizedString("Update Mail Plug-in", comment: "")
+            self.installMailPluginMenuItem.title = NSLocalizedString("Update Mail Plug-in…", comment: "")
         }
         else if self.pluginManager.isMailPluginInstalled
         {
-            self.installMailPluginMenuItem.title = NSLocalizedString("Uninstall Mail Plug-in", comment: "")
+            self.installMailPluginMenuItem.title = NSLocalizedString("Uninstall Mail Plug-in…", comment: "")
         }
         else
         {
-            self.installMailPluginMenuItem.title = NSLocalizedString("Install Mail Plug-in", comment: "")
+            self.installMailPluginMenuItem.title = NSLocalizedString("Install Mail Plug-in…", comment: "")
         }
         self.installMailPluginMenuItem.target = self
         self.installMailPluginMenuItem.action = #selector(AppDelegate.handleInstallMailPluginMenuItem(_:))

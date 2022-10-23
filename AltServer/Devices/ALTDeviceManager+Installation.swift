@@ -10,7 +10,7 @@ import Cocoa
 import UserNotifications
 import ObjectiveC
 
-private let appGroupsLock = NSLock()
+private let appGroupsSemaphore = DispatchSemaphore(value: 1)
 
 private let developerDiskManager = DeveloperDiskManager()
 
@@ -633,7 +633,13 @@ private extension ALTDeviceManager
         
         if let applicationGroups = app.entitlements[.appGroups] as? [String], !applicationGroups.isEmpty
         {
+            // App uses app groups, so assign `true` to enable the feature.
             features[.appGroups] = true
+        }
+        else
+        {
+            // App has no app groups, so assign `false` to disable the feature.
+            features[.appGroups] = false
         }
         
         var updateFeatures = false
@@ -644,6 +650,11 @@ private extension ALTDeviceManager
             if let appIDValue = appID.features[feature] as AnyObject?, (value as AnyObject).isEqual(appIDValue)
             {
                 // AppID already has this feature enabled and the values are the same.
+                continue
+            }
+            else if appID.features[feature] == nil, let shouldEnableFeature = value as? Bool, !shouldEnableFeature
+            {
+                // AppID doesn't already have this feature enabled, but we want it disabled anyway.
                 continue
             }
             else
@@ -672,28 +683,22 @@ private extension ALTDeviceManager
     
     func updateAppGroups(for appID: ALTAppID, app: ALTApplication, team: ALTTeam, session: ALTAppleAPISession, completionHandler: @escaping (Result<ALTAppID, Error>) -> Void)
     {
-        let applicationGroups = app.entitlements[.appGroups] as? [String] ?? []
-        if applicationGroups.isEmpty
-        {
-            guard let isAppGroupsEnabled = appID.features[.appGroups] as? Bool, isAppGroupsEnabled else {
-                // No app groups, and we also haven't enabled the feature, so don't continue.
-                // For apps with no app groups but have had the feature enabled already
-                // we'll continue and assign the app ID to an empty array
-                // in case we need to explicitly remove them.
-                return completionHandler(.success(appID))
-            }
+        guard let applicationGroups = app.entitlements[.appGroups] as? [String], !applicationGroups.isEmpty else {
+            // Assigning an App ID to an empty app group array fails,
+            // so just do nothing if there are no app groups.
+            return completionHandler(.success(appID))
         }
         
-        // Dispatch onto global queue to prevent appGroupsLock deadlock.
+        // Dispatch onto global queue to prevent appGroupsSemaphore deadlock.
         DispatchQueue.global().async {
             
             // Ensure we're not concurrently fetching and updating app groups,
             // which can lead to race conditions such as adding an app group twice.
-            appGroupsLock.lock()
+            appGroupsSemaphore.wait()
             
             func finish(_ result: Result<ALTAppID, Error>)
             {
-                appGroupsLock.unlock()
+                appGroupsSemaphore.signal()
                 completionHandler(result)
             }
             
@@ -844,6 +849,12 @@ private extension ALTDeviceManager
                         let certificateURL = application.fileURL.appendingPathComponent("ALTCertificate.p12")
                         try encryptedData.write(to: certificateURL, options: .atomic)
                     }
+                }
+                else if infoDictionary.keys.contains(Bundle.Info.deviceID)
+                {
+                    // There is an ALTDeviceID entry, so assume the app is using AltKit and replace it with the device's UDID.
+                    additionalValues[Bundle.Info.deviceID] = device.identifier
+                    additionalValues[Bundle.Info.serverID] = UserDefaults.standard.serverID
                 }
                 
                 try prepare(appBundle, additionalInfoDictionaryValues: additionalValues)
